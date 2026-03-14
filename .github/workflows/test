@@ -1,0 +1,102 @@
+name: Timesheet Automation
+
+on:
+  schedule:
+    # Daily summary at 10:00 PM IST = 16:30 UTC
+    - cron: "30 16 * * 1-5"
+    # Reaction check every 15 minutes (runs for ~3 hours after 10pm IST)
+    # 16:45, 17:00, 17:15 ... 19:30 UTC  →  10:15pm–1:00am IST
+    - cron: "45 16 * * 1-5"
+    - cron: "0 17 * * 1-5"
+    - cron: "15 17 * * 1-5"
+    - cron: "30 17 * * 1-5"
+    - cron: "45 17 * * 1-5"
+    - cron: "0 18 * * 1-5"
+    - cron: "15 18 * * 1-5"
+    - cron: "30 18 * * 1-5"
+    - cron: "45 18 * * 1-5"
+    - cron: "0 19 * * 1-5"
+    - cron: "15 19 * * 1-5"
+    - cron: "30 19 * * 1-5"
+  workflow_dispatch:   # allow manual trigger from GitHub UI
+
+jobs:
+  # ── Job 1: Daily Summary (only runs at 10pm cron = 16:30 UTC) ─────────────
+  daily-summary:
+    runs-on: ubuntu-latest
+    if: github.event.schedule == '30 16 * * 1-5' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run daily summary
+        env:
+          SLACK_BOT_TOKEN:   ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_USER_TOKEN:  ${{ secrets.SLACK_USER_TOKEN }}
+          SLACK_CHANNEL_ID:  ${{ secrets.SLACK_CHANNEL_ID }}
+          MY_SLACK_USER_ID:  ${{ secrets.MY_SLACK_USER_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python daily_summary.py
+
+      - name: Upload state file
+        uses: actions/upload-artifact@v4
+        with:
+          name: reaction-state
+          path: reaction_state.json
+          retention-days: 1   # only keep for 1 day
+
+  # ── Job 2: Reaction Check (runs every 15 min after 10pm) ──────────────────
+  check-reaction:
+    runs-on: ubuntu-latest
+    if: github.event.schedule != '30 16 * * 1-5'
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Download today's state file
+        uses: actions/download-artifact@v4
+        with:
+          name: reaction-state
+        continue-on-error: true   # if no artifact yet, script exits gracefully
+
+      - name: Check for reaction and update timesheet
+        env:
+          SLACK_BOT_TOKEN:    ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_USER_TOKEN:   ${{ secrets.SLACK_USER_TOKEN }}
+          MY_SLACK_USER_ID:   ${{ secrets.MY_SLACK_USER_ID }}
+          ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
+          MS_CLIENT_ID:       ${{ secrets.MS_CLIENT_ID }}
+          MS_CLIENT_SECRET:   ${{ secrets.MS_CLIENT_SECRET }}
+          MS_TENANT_ID:       ${{ secrets.MS_TENANT_ID }}
+          SHAREPOINT_SITE_ID: ${{ secrets.SHAREPOINT_SITE_ID }}
+          SHAREPOINT_DRIVE_ID: ${{ secrets.SHAREPOINT_DRIVE_ID }}
+          SHAREPOINT_ITEM_ID: ${{ secrets.SHAREPOINT_ITEM_ID }}
+          SHEET_NAME:         ${{ secrets.SHEET_NAME }}
+        run: python check_reaction.py
+
+      - name: Re-upload updated state file
+        uses: actions/upload-artifact@v4
+        with:
+          name: reaction-state
+          path: reaction_state.json
+          overwrite: true
+          retention-days: 1
+        if: always()
